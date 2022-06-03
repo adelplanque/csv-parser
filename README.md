@@ -2,6 +2,14 @@
 
 Fast, header-only, C++11 CSV parser.
 
+## Note about this fork
+
+Use file descriptor as input instead of istream.
+
+With `istream`, when reading data from a pipe, the parser is bloked
+until buffer is full or EOF.
+
+
 ## Usage
 
 #### Configuration

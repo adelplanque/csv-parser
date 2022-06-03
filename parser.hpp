@@ -7,6 +7,8 @@
 #include <string>
 #include <vector>
 
+#include <fmt/format.h>
+
 namespace aria {
   namespace csv {
     enum class Term { CRLF = -2 };
@@ -55,18 +57,17 @@ namespace aria {
       char m_quote = '"';
       char m_delimiter = ',';
       Term m_terminator = Term::CRLF;
-      std::istream& m_input;
+      int m_input_fd = -1;
 
       // Buffer capacities
       static constexpr int FIELDBUF_CAP = 1024;
-      static constexpr int INPUTBUF_CAP = 1024 * 128;
+      static constexpr int INPUTBUF_CAP = 1024 * 8;
 
       // Buffers
       std::string m_fieldbuf{};
       std::unique_ptr<char[]> m_inputbuf = std::unique_ptr<char[]>(new char[INPUTBUF_CAP]{});
 
       // Misc
-      bool m_eof = false;
       size_t m_cursor = INPUTBUF_CAP;
       size_t m_inputbuf_size = INPUTBUF_CAP;
       std::streamoff m_scanposition = -INPUTBUF_CAP;
@@ -74,11 +75,11 @@ namespace aria {
       // Creates the CSV parser which by default, splits on commas,
       // uses quotes to escape, and handles CSV files that end in either
       // '\r', '\n', or '\r\n'.
-      explicit CsvParser(std::istream& input): m_input(input) {
+      explicit CsvParser(int input_fd): m_input_fd(input_fd) {
         // Reserve space upfront to improve performance
         m_fieldbuf.reserve(FIELDBUF_CAP);
-        if (!m_input.good()) {
-          throw std::runtime_error("Something is wrong with input stream");
+        if (fcntl(input_fd, F_GETFD) == -1) {
+          throw std::runtime_error(fmt::format("Bad file descriptor: {}", input_fd));
         }
       }
 
@@ -231,27 +232,18 @@ namespace aria {
       // the cursor forward. If the stream is empty and the input buffer
       // is also empty return a nullptr.
       char* top_token() {
-        // Return null if there's nothing left to read
-        if (m_eof && m_cursor == m_inputbuf_size) {
-          return nullptr;
-        }
-
         // Refill the input buffer if it's been fully read
         if (m_cursor == m_inputbuf_size) {
           m_scanposition += static_cast<std::streamoff>(m_cursor);
           m_cursor = 0;
-          m_input.read(m_inputbuf.get(), INPUTBUF_CAP);
+          if ((m_inputbuf_size = read(m_input_fd, m_inputbuf.get(), INPUTBUF_CAP)) == -1) {
+            throw std::runtime_error(fmt::format("Can't read data [{}]: {}",
+                                                 errno, strerror(errno)));
+          }
 
-          // Indicate we hit end of file, and resize
-          // input buffer to show that it's not at full capacity
-          if (m_input.eof()) {
-            m_eof = true;
-            m_inputbuf_size = static_cast<size_t>(m_input.gcount());
-
-            // Return null if there's nothing left to read
-            if (m_inputbuf_size == 0) {
-              return nullptr;
-            }
+          if (m_inputbuf_size == 0) {
+            // No bytes readed => EOF
+            return nullptr;
           }
         }
 
